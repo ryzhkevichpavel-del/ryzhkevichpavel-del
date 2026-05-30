@@ -5,7 +5,7 @@ workflows.
 
 Current public project:
 
-- [Zapiski Site Kit](https://github.com/ryzhkevichpavel-del/zapiski-site-kit) -
+- [Zapiski Site Engine](https://github.com/ryzhkevichpavel-del/zapiski-site-engine) -
   a clean open-source extraction of a Python website engine for content,
   profiles, comments, media, admin editing, and compact self-hosted workflows.
 
