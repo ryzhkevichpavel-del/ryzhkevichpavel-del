@@ -1,14 +1,21 @@
 source:already-materialized
-bootstrap:exception
-Traceback (most recent call last):
-  File "/home/runner/work/ryzhkevichpavel-del/ryzhkevichpavel-del/bootstrap_tihiy_bereg.py", line 49, in <module>
-    replace(sim, "var blend := clampf(rate * falloff * 2.4, 0.0, 0.88)", "var smooth_blend: float = clampf(rate * falloff * 2.4, 0.0, 0.88)")
-  File "/home/runner/work/ryzhkevichpavel-del/ryzhkevichpavel-del/bootstrap_tihiy_bereg.py", line 24, in replace
-    text = path.read_text(encoding="utf-8")
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/pathlib.py", line 1030, in read_text
-    return f.read()
-           ^^^^^^^^
-  File "<frozen codecs>", line 322, in decode
-UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbf in position 79: invalid start byte
-
+restored:tihiy-bereg/scripts/simulation.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/scripts/main.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+patched:tihiy-bereg/tests/test_simulation.gd
+bootstrap:success

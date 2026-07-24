@@ -323,7 +323,7 @@ func _create_natural_details() -> void:
 	for _i in range(950):
 		var x := rng.randf_range(-45.0, 45.0)
 		var z := rng.randf_range(5.0, 32.0)
-		var y := sim.sample_height(x, z)
+		var y: float = sim.sample_height(x, z)
 		var density := clampf((z - 3.0) / 30.0, 0.0, 1.0)
 		if y > 0.32 and rng.randf() < 0.30 + density * 0.48:
 			grass_positions.append(Vector3(x, y + 0.38, z))
@@ -359,7 +359,7 @@ func _create_natural_details() -> void:
 	for i in range(pebble_mm.instance_count):
 		var x := rng.randf_range(-44.0, 44.0)
 		var z := rng.randf_range(-4.0, 25.0)
-		var y := sim.sample_height(x, z)
+		var y: float = sim.sample_height(x, z)
 		var scale := rng.randf_range(0.45, 1.65)
 		var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3(scale * rng.randf_range(0.75, 1.35), scale * rng.randf_range(0.55, 0.95), scale))
 		pebble_mm.set_instance_transform(i, Transform3D(basis, Vector3(x, y + 0.055 * scale, z)))
@@ -384,7 +384,7 @@ func _create_natural_details() -> void:
 	for i in range(shell_mm.instance_count):
 		var x := rng.randf_range(-42.0, 42.0)
 		var z := rng.randf_range(-0.5, 18.0)
-		var y := sim.sample_height(x, z)
+		var y: float = sim.sample_height(x, z)
 		var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).rotated(Vector3.RIGHT, rng.randf_range(-0.28, 0.28))
 		basis = basis.scaled(Vector3(rng.randf_range(0.7, 1.4), rng.randf_range(0.7, 1.2), rng.randf_range(0.7, 1.35)))
 		shell_mm.set_instance_transform(i, Transform3D(basis, Vector3(x, y + 0.025, z)))
@@ -1034,7 +1034,7 @@ func _update_brush_target() -> void:
 		return
 	var point := origin + direction * t
 	for _i in range(4):
-		var height := sim.sample_height(point.x, point.z)
+		var height: float = sim.sample_height(point.x, point.z)
 		t = (height - origin.y) / direction.y
 		point = origin + direction * t
 	brush_valid = absf(point.x) <= sim.world_size.x * 0.49 and absf(point.z) <= sim.world_size.y * 0.49
@@ -1128,7 +1128,7 @@ func _update_visual_particles(delta: float) -> void:
 func _place_tower(point: Vector3, quiet := false) -> void:
 	var root := Node3D.new()
 	root.name = "SandTower"
-	var ground := sim.sample_height(point.x, point.z)
+	var ground: float = sim.sample_height(point.x, point.z)
 	root.position = Vector3(point.x, ground, point.z)
 	root.rotation.y = rng.randf_range(-0.08, 0.08)
 
@@ -1331,7 +1331,7 @@ func _throw_rock(point: Vector3, quiet := false) -> void:
 func _place_driftwood(point: Vector3, quiet := false) -> void:
 	var root := Node3D.new()
 	root.name = "Driftwood"
-	var ground := sim.sample_height(point.x, point.z)
+	var ground: float = sim.sample_height(point.x, point.z)
 	root.position = Vector3(point.x, ground + 0.30, point.z)
 	root.rotation = Vector3(rng.randf_range(-0.16, 0.16), rng.randf_range(0.0, TAU), rng.randf_range(-0.12, 0.12))
 	var trunk := MeshInstance3D.new()
@@ -1380,10 +1380,10 @@ func _update_dynamic_objects(delta: float) -> void:
 		var velocity: Vector3 = record["velocity"]
 		var radius := float(record["radius"])
 		var density := float(record["density"])
-		var ground := sim.sample_height(node.position.x, node.position.z)
-		var depth := sim.sample_water_depth(node.position.x, node.position.z)
-		var surface := sim.sample_water_surface(node.position.x, node.position.z)
-		var flow := sim.sample_flow(node.position.x, node.position.z)
+		var ground: float = sim.sample_height(node.position.x, node.position.z)
+		var depth: float = sim.sample_water_depth(node.position.x, node.position.z)
+		var surface: float = sim.sample_water_surface(node.position.x, node.position.z)
+		var flow: Vector2 = sim.sample_flow(node.position.x, node.position.z)
 		velocity.y -= 9.2 * delta
 		if depth > 0.008 and node.position.y - radius < surface:
 			var submerged := clampf((surface - (node.position.y - radius)) / maxf(radius * 2.0, 0.01), 0.0, 1.0)
@@ -1395,7 +1395,7 @@ func _update_dynamic_objects(delta: float) -> void:
 		if node.position.y - radius <= ground:
 			var impact_speed := -velocity.y
 			node.position.y = ground + radius
-			var normal := sim.terrain_normal(node.position.x, node.position.z)
+			var normal: Vector3 = sim.terrain_normal(node.position.x, node.position.z)
 			if impact_speed > 1.3 and record["kind"] == "rock" and not bool(record["grounded"]):
 				sim.apply_impact(node.position, radius * 1.45, impact_speed * radius)
 				_spawn_sand_particles(node.position, 24, Color("#b98b5a"), minf(1.4, impact_speed * 0.18))
@@ -1417,11 +1417,11 @@ func _update_build_support(delta: float) -> void:
 		if not is_instance_valid(node):
 			continue
 		var p: Vector3 = record["position"]
-		var ground := sim.sample_height(p.x, p.z)
+		var ground: float = sim.sample_height(p.x, p.z)
 		var initial_height := float(record["base_height"])
 		var loss := clampf(initial_height - ground, 0.0, 1.5)
 		node.position.y = lerpf(node.position.y, ground, 1.0 - exp(-delta * 2.2))
-		var flow := sim.sample_flow(p.x, p.z)
+		var flow: Vector2 = sim.sample_flow(p.x, p.z)
 		var target_tilt := Vector2(flow.y, -flow.x) * minf(0.12, loss * 0.08 + flow.length() * 0.012)
 		var tilt: Vector2 = record["tilt"]
 		tilt = tilt.lerp(target_tilt, 1.0 - exp(-delta * 0.55))
