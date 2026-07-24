@@ -1,4 +1,3 @@
 source:already-materialized
 restored:tihiy-bereg/scripts/simulation.gd
-patched:tihiy-bereg/scripts/main.gd:remove-screen-space-aa
 bootstrap:success
