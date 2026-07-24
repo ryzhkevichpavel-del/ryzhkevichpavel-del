@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_alpha_prepass, cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_prepass_alpha, cull_back, diffuse_burley, specular_schlick_ggx;
 
 uniform sampler2D state_tex : filter_linear, repeat_disable;
 uniform sampler2D flow_tex : filter_linear, repeat_disable;
