@@ -95,7 +95,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          xvfb-run -a -s "-screen 0 1600x900x24" timeout 150s /tmp/godot/godot --path "$PROJECT_DIR" --resolution 1600x900 -- --capture --quit-after-capture 2>&1 | tee "$PROJECT_DIR/build/diagnostics/opengl.log"
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1600x900x24" timeout 90s /tmp/godot/godot --audio-driver Dummy --rendering-method gl_compatibility --path "$PROJECT_DIR" --resolution 1600x900 -- --capture --quit-after-capture 2>&1 | tee "$PROJECT_DIR/build/diagnostics/opengl.log"
           code="${PIPESTATUS[0]}"
           test -s "$PROJECT_DIR/build/capture.png" || code=91
           echo "$code" > "$PROJECT_DIR/build/diagnostics/opengl.status"
@@ -146,6 +146,15 @@ jobs:
           if-no-files-found: ignore
           compression-level: 0
 
+      - name: Upload Linux Godot runner for local verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Godot-4.7.1-Linux-Runner
+          path: /tmp/godot/godot
+          if-no-files-found: error
+          compression-level: 0
+
       - name: Enforce every quality gate
         if: always()
         shell: bash
@@ -156,6 +165,7 @@ jobs:
             echo "$stage=$code"
             test "$code" = 0
           done
+          ! grep -Eiq 'SCRIPT ERROR|Parse Error|Shader compilation failed|Failed to load script' "$PROJECT_DIR/build/diagnostics"/*.log
           test -s "$PROJECT_DIR/build/capture.png"
           test -s "$PROJECT_DIR/build/TihiyBereg.exe"
           test -s "$PROJECT_DIR/build/Tihiy-Bereg-2.0-Windows-x64.zip"
