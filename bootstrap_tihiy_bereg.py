@@ -4,6 +4,7 @@ import base64
 import io
 import tarfile
 import traceback
+import zlib
 
 root = Path(__file__).resolve().parent
 source = root / "tihiy-bereg"
@@ -37,6 +38,16 @@ try:
     else:
         note("source:already-materialized")
 
+    sim = source / "scripts" / "simulation.gd"
+    sim_override = root / "source_overrides" / "simulation.z.b64"
+    if sim_override.exists():
+        compressed = base64.b64decode(sim_override.read_text(encoding="ascii").strip())
+        clean_simulation = zlib.decompress(compressed)
+        clean_simulation.decode("utf-8")
+        sim.parent.mkdir(parents=True, exist_ok=True)
+        sim.write_bytes(clean_simulation)
+        note("restored:tihiy-bereg/scripts/simulation.gd")
+
     if project.exists():
         project.write_text(project.read_text(encoding="utf-8").replace(
             "anti_aliasing/quality/screen_space_aa=1\n", ""
@@ -45,7 +56,6 @@ try:
     bus = source / "default_bus_layout.tres"
     bus.write_text('[gd_resource type="AudioBusLayout" format=3]\n\n[resource]\n', encoding="utf-8")
 
-    sim = source / "scripts" / "simulation.gd"
     replace(sim, "var blend := clampf(rate * falloff * 2.4, 0.0, 0.88)", "var smooth_blend: float = clampf(rate * falloff * 2.4, 0.0, 0.88)")
     replace(sim, "smooth_values[smooth_index], blend)", "smooth_values[smooth_index], smooth_blend)")
     replace(sim, "compaction[i] + blend * 0.025", "compaction[i] + smooth_blend * 0.025")
