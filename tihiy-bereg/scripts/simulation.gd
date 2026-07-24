@@ -1,0 +1,550 @@
+class_name BeachSimulation
+extends RefCounted
+
+const EPS := 0.00001
+const SEA_LEVEL := 0.0
+
+var width: int
+var height_count: int
+var world_size := Vector2(96.0, 68.0)
+var cell_x: float
+var cell_z: float
+
+var terrain := PackedFloat32Array()
+var terrain_prev := PackedFloat32Array()
+var water := PackedFloat32Array()
+var water_prev := PackedFloat32Array()
+var water_next := PackedFloat32Array()
+var wetness := PackedFloat32Array()
+var wetness_next := PackedFloat32Array()
+var compaction := PackedFloat32Array()
+var foam := PackedFloat32Array()
+var foam_prev := PackedFloat32Array()
+var sediment := PackedFloat32Array()
+var velocity_x := PackedFloat32Array()
+var velocity_z := PackedFloat32Array()
+var obstacle := PackedFloat32Array()
+var delta_water := PackedFloat32Array()
+var delta_sediment := PackedFloat32Array()
+
+var state_texture: ImageTexture
+var flow_texture: ImageTexture
+var state_image: Image
+var flow_image: Image
+var _state_bytes := PackedByteArray()
+var _flow_bytes := PackedByteArray()
+
+var tide_level := 0.06
+var wave_strength := 1.0
+var wave_phase := 0.0
+var sim_time := 0.0
+var water_paused := false
+var mass_reference := 0.0
+var last_visual_alpha := 1.0
+
+func _init(w := 161, h := 121) -> void:
+	width = w
+	height_count = h
+	cell_x = world_size.x / float(width - 1)
+	cell_z = world_size.y / float(height_count - 1)
+	var n := width * height_count
+	terrain.resize(n)
+	terrain_prev.resize(n)
+	water.resize(n)
+	water_prev.resize(n)
+	water_next.resize(n)
+	wetness.resize(n)
+	wetness_next.resize(n)
+	compaction.resize(n)
+	foam.resize(n)
+	foam_prev.resize(n)
+	sediment.resize(n)
+	velocity_x.resize(n)
+	velocity_z.resize(n)
+	obstacle.resize(n)
+	delta_water.resize(n)
+	delta_sediment.resize(n)
+	_generate_initial_beach()
+	_create_textures()
+	mass_reference = total_sand_mass()
+
+func idx(x: int, z: int) -> int:
+	return z * width + x
+
+func _hash2(x: float, y: float) -> float:
+	return fposmod(sin(x * 127.1 + y * 311.7) * 43758.5453, 1.0)
+
+func _noise2(x: float, y: float) -> float:
+	var ix := floori(x)
+	var iy := floori(y)
+	var fx := x - float(ix)
+	var fy := y - float(iy)
+	var ux := fx * fx * (3.0 - 2.0 * fx)
+	var uy := fy * fy * (3.0 - 2.0 * fy)
+	var a := _hash2(float(ix), float(iy))
+	var b := _hash2(float(ix + 1), float(iy))
+	var c := _hash2(float(ix), float(iy + 1))
+	var d := _hash2(float(ix + 1), float(iy + 1))
+	return lerpf(lerpf(a, b, ux), lerpf(c, d, ux), uy)
+
+func _fbm(x: float, y: float) -> float:
+	var value := 0.0
+	var amplitude := 0.55
+	var frequency := 1.0
+	for _octave in range(5):
+		value += (_noise2(x * frequency, y * frequency) * 2.0 - 1.0) * amplitude
+		frequency *= 2.03
+		amplitude *= 0.48
+	return value
+
+func _generate_initial_beach() -> void:
+	for z in range(height_count):
+		var v := float(z) / float(height_count - 1)
+		var wz := (v - 0.5) * world_size.y
+		for x in range(width):
+			var u := float(x) / float(width - 1)
+			var wx := (u - 0.5) * world_size.x
+			var shore_curve := 1.65 * sin(wx * 0.049) + 0.52 * sin(wx * 0.137 + 0.85) + 0.18 * sin(wx * 0.31)
+			var distance_inland := wz - shore_curve
+			var beach_profile := -1.82 + (wz + world_size.y * 0.5) * 0.059
+			var dune_mask := smoothstep(-0.5, 17.0, distance_inland)
+			var dunes := dune_mask * (0.44 * _fbm(wx * 0.032, wz * 0.032) + 0.11 * sin(wx * 0.19 + wz * 0.07))
+			var berm := 0.22 * exp(-pow((distance_inland - 6.5) / 5.2, 2.0))
+			var wash_channels := -0.07 * exp(-pow((wx + 16.0) / 4.3, 2.0)) * smoothstep(-2.0, 10.0, distance_inland)
+			wash_channels += -0.05 * exp(-pow((wx - 22.0) / 5.6, 2.0)) * smoothstep(-1.0, 11.0, distance_inland)
+			var micro := 0.024 * _fbm(wx * 0.20, wz * 0.20)
+			var height_value := beach_profile + dunes + berm + wash_channels + micro
+			var i := idx(x, z)
+			terrain[i] = height_value
+			terrain_prev[i] = height_value
+			var ocean_depth := maxf(0.0, SEA_LEVEL + tide_level - height_value)
+			water[i] = ocean_depth if distance_inland < 0.5 else 0.0
+			water_prev[i] = water[i]
+			wetness[i] = clampf(1.0 - absf(height_value - SEA_LEVEL) * 1.25, 0.0, 1.0)
+			wetness_next[i] = wetness[i]
+			compaction[i] = clampf(0.38 + dune_mask * 0.18 + wetness[i] * 0.22 + 0.05 * _fbm(wx * 0.11, wz * 0.11), 0.05, 0.95)
+			foam[i] = 0.0
+			foam_prev[i] = 0.0
+			sediment[i] = 0.0
+			velocity_x[i] = 0.0
+			velocity_z[i] = 0.0
+			obstacle[i] = 0.0
+
+func _create_textures() -> void:
+	_state_bytes.resize(width * height_count * 16)
+	_flow_bytes.resize(width * height_count * 16)
+	state_image = Image.create(width, height_count, false, Image.FORMAT_RGBAF)
+	flow_image = Image.create(width, height_count, false, Image.FORMAT_RGBAF)
+	_update_texture_bytes(1.0)
+	state_texture = ImageTexture.create_from_image(state_image)
+	flow_texture = ImageTexture.create_from_image(flow_image)
+
+func _update_texture_bytes(alpha: float) -> void:
+	last_visual_alpha = clampf(alpha, 0.0, 1.0)
+	for i in range(width * height_count):
+		var o := i * 16
+		var visual_height := lerpf(terrain_prev[i], terrain[i], last_visual_alpha)
+		var visual_water := lerpf(water_prev[i], water[i], last_visual_alpha)
+		var visual_foam := lerpf(foam_prev[i], foam[i], last_visual_alpha)
+		_state_bytes.encode_float(o, visual_height)
+		_state_bytes.encode_float(o + 4, wetness[i])
+		_state_bytes.encode_float(o + 8, visual_water)
+		_state_bytes.encode_float(o + 12, visual_foam)
+		_flow_bytes.encode_float(o, velocity_x[i])
+		_flow_bytes.encode_float(o + 4, velocity_z[i])
+		_flow_bytes.encode_float(o + 8, sediment[i])
+		_flow_bytes.encode_float(o + 12, obstacle[i])
+	state_image = Image.create_from_data(width, height_count, false, Image.FORMAT_RGBAF, _state_bytes)
+	flow_image = Image.create_from_data(width, height_count, false, Image.FORMAT_RGBAF, _flow_bytes)
+	if state_texture:
+		state_texture.update(state_image)
+	if flow_texture:
+		flow_texture.update(flow_image)
+
+func upload_textures(alpha := 1.0) -> void:
+	_update_texture_bytes(alpha)
+
+func world_to_grid(p: Vector3) -> Vector2:
+	var u := p.x / world_size.x + 0.5
+	var v := p.z / world_size.y + 0.5
+	return Vector2(u * float(width - 1), v * float(height_count - 1))
+
+func grid_to_world(gx: float, gz: float) -> Vector3:
+	return Vector3((gx / float(width - 1) - 0.5) * world_size.x, sample_height_grid(gx, gz), (gz / float(height_count - 1) - 0.5) * world_size.y)
+
+func sample_height(world_x: float, world_z: float) -> float:
+	var gx := (world_x / world_size.x + 0.5) * float(width - 1)
+	var gz := (world_z / world_size.y + 0.5) * float(height_count - 1)
+	return sample_height_grid(gx, gz)
+
+func sample_height_grid(gx: float, gz: float) -> float:
+	gx = clampf(gx, 0.0, float(width - 1))
+	gz = clampf(gz, 0.0, float(height_count - 1))
+	var x0 := floori(gx)
+	var z0 := floori(gz)
+	var x1 := mini(x0 + 1, width - 1)
+	var z1 := mini(z0 + 1, height_count - 1)
+	var tx := gx - float(x0)
+	var tz := gz - float(z0)
+	return lerpf(lerpf(terrain[idx(x0, z0)], terrain[idx(x1, z0)], tx), lerpf(terrain[idx(x0, z1)], terrain[idx(x1, z1)], tx), tz)
+
+func sample_water_surface(world_x: float, world_z: float) -> float:
+	var gx := clampi(roundi((world_x / world_size.x + 0.5) * float(width - 1)), 0, width - 1)
+	var gz := clampi(roundi((world_z / world_size.y + 0.5) * float(height_count - 1)), 0, height_count - 1)
+	var i := idx(gx, gz)
+	return terrain[i] + water[i]
+
+func sample_water_depth(world_x: float, world_z: float) -> float:
+	var gx := clampi(roundi((world_x / world_size.x + 0.5) * float(width - 1)), 0, width - 1)
+	var gz := clampi(roundi((world_z / world_size.y + 0.5) * float(height_count - 1)), 0, height_count - 1)
+	return water[idx(gx, gz)]
+
+func sample_flow(world_x: float, world_z: float) -> Vector2:
+	var gx := clampi(roundi((world_x / world_size.x + 0.5) * float(width - 1)), 0, width - 1)
+	var gz := clampi(roundi((world_z / world_size.y + 0.5) * float(height_count - 1)), 0, height_count - 1)
+	var i := idx(gx, gz)
+	return Vector2(velocity_x[i], velocity_z[i])
+
+func terrain_normal(world_x: float, world_z: float) -> Vector3:
+	var dx := sample_height(world_x + cell_x, world_z) - sample_height(world_x - cell_x, world_z)
+	var dz := sample_height(world_x, world_z + cell_z) - sample_height(world_x, world_z - cell_z)
+	return Vector3(-dx / (2.0 * cell_x), 1.0, -dz / (2.0 * cell_z)).normalized()
+
+func apply_brush(tool: int, world_pos: Vector3, radius: float, strength: float, dt: float, flatten_height := 0.0) -> void:
+	var g := world_to_grid(world_pos)
+	var rx := ceili(radius / cell_x) + 1
+	var rz := ceili(radius / cell_z) + 1
+	var cx := roundi(g.x)
+	var cz := roundi(g.y)
+	var x0 := maxi(1, cx - rx)
+	var x1 := mini(width - 2, cx + rx)
+	var z0 := maxi(1, cz - rz)
+	var z1 := mini(height_count - 2, cz + rz)
+	var rate := strength * dt
+	var smooth_values := PackedFloat32Array()
+	if tool == 2:
+		smooth_values.resize((x1 - x0 + 1) * (z1 - z0 + 1))
+		var si := 0
+		for z in range(z0, z1 + 1):
+			for x in range(x0, x1 + 1):
+				var sum := 0.0
+				var weight := 0.0
+				for oz in range(-2, 3):
+					for ox in range(-2, 3):
+						var w := 1.0 / (1.0 + float(ox * ox + oz * oz))
+						sum += terrain[idx(x + ox, z + oz)] * w
+						weight += w
+				smooth_values[si] = sum / maxf(weight, EPS)
+				si += 1
+	var smooth_index := 0
+	for z in range(z0, z1 + 1):
+		for x in range(x0, x1 + 1):
+			var dx := (float(x) - g.x) * cell_x
+			var dz := (float(z) - g.y) * cell_z
+			var d := sqrt(dx * dx + dz * dz)
+			if d > radius:
+				if tool == 2:
+					smooth_index += 1
+				continue
+			var t := clampf(1.0 - d / radius, 0.0, 1.0)
+			var falloff := t * t * (3.0 - 2.0 * t)
+			var i := idx(x, z)
+			match tool:
+				0:
+					terrain[i] += rate * falloff * 1.10
+					compaction[i] = maxf(0.05, compaction[i] - rate * falloff * 0.10)
+					wetness[i] = maxf(0.0, wetness[i] - rate * falloff * 0.05)
+				1:
+					var removed := minf(rate * falloff * 1.02, terrain[i] + 2.7)
+					terrain[i] -= removed
+					compaction[i] = maxf(0.05, compaction[i] - removed * 0.25)
+				2:
+					var smooth_blend: float = clampf(rate * falloff * 2.4, 0.0, 0.88)
+					terrain[i] = lerpf(terrain[i], smooth_values[smooth_index], smooth_blend)
+					compaction[i] = minf(1.0, compaction[i] + smooth_blend * 0.025)
+				3:
+					var flatten_blend: float = clampf(rate * falloff * 2.0, 0.0, 0.94)
+					terrain[i] = lerpf(terrain[i], flatten_height, flatten_blend)
+					compaction[i] = minf(1.0, compaction[i] + flatten_blend * 0.04)
+				4:
+					water[i] += rate * falloff * 0.72
+					wetness[i] = 1.0
+				8:
+					var ring := exp(-pow((d - radius * 0.64) / maxf(0.12, radius * 0.15), 2.0))
+					terrain[i] -= rate * ring * 0.88
+					water[i] += rate * ring * 0.045
+					compaction[i] = maxf(0.05, compaction[i] - rate * ring * 0.08)
+			if tool == 2:
+				smooth_index += 1
+
+func apply_impact(world_pos: Vector3, radius: float, energy: float) -> void:
+	var g := world_to_grid(world_pos)
+	var rx := ceili(radius * 2.1 / cell_x) + 1
+	var rz := ceili(radius * 2.1 / cell_z) + 1
+	var displaced := 0.0
+	var rim_cells: Array[int] = []
+	for z in range(maxi(1, roundi(g.y) - rz), mini(height_count - 1, roundi(g.y) + rz + 1)):
+		for x in range(maxi(1, roundi(g.x) - rx), mini(width - 1, roundi(g.x) + rx + 1)):
+			var dx := (float(x) - g.x) * cell_x
+			var dz := (float(z) - g.y) * cell_z
+			var d := sqrt(dx * dx + dz * dz)
+			var i := idx(x, z)
+			if d < radius:
+				var f := 1.0 - d / radius
+				var amount := minf(terrain[i] + 2.7, energy * f * f * 0.08)
+				terrain[i] -= amount
+				displaced += amount
+				compaction[i] = minf(1.0, compaction[i] + amount * 0.7)
+			elif d < radius * 1.75:
+				rim_cells.append(i)
+	if not rim_cells.is_empty() and displaced > 0.0:
+		var share := displaced / float(rim_cells.size())
+		for i in rim_cells:
+			terrain[i] += share
+
+func displace_water(world_pos: Vector3, radius: float, amount: float, impulse: Vector2) -> void:
+	var g := world_to_grid(world_pos)
+	var rx := ceili(radius / cell_x) + 1
+	var rz := ceili(radius / cell_z) + 1
+	for z in range(maxi(1, roundi(g.y) - rz), mini(height_count - 1, roundi(g.y) + rz + 1)):
+		for x in range(maxi(1, roundi(g.x) - rx), mini(width - 1, roundi(g.x) + rx + 1)):
+			var dx := (float(x) - g.x) * cell_x
+			var dz := (float(z) - g.y) * cell_z
+			var d := sqrt(dx * dx + dz * dz)
+			if d < radius:
+				var f := 1.0 - d / radius
+				var i := idx(x, z)
+				foam[i] = minf(1.0, foam[i] + f * amount * 0.25)
+				velocity_x[i] += impulse.x * f
+				velocity_z[i] += impulse.y * f
+
+func stamp_obstacle(world_pos: Vector3, radius: float, value := 1.0) -> void:
+	var g := world_to_grid(world_pos)
+	var rx := ceili(radius / cell_x) + 1
+	var rz := ceili(radius / cell_z) + 1
+	for z in range(maxi(1, roundi(g.y) - rz), mini(height_count - 1, roundi(g.y) + rz + 1)):
+		for x in range(maxi(1, roundi(g.x) - rx), mini(width - 1, roundi(g.x) + rx + 1)):
+			var dx := (float(x) - g.x) * cell_x
+			var dz := (float(z) - g.y) * cell_z
+			var d := sqrt(dx * dx + dz * dz)
+			if d < radius:
+				obstacle[idx(x, z)] = maxf(obstacle[idx(x, z)], value * smoothstep(radius, radius * 0.28, d))
+
+func clear_obstacles() -> void:
+	obstacle.fill(0.0)
+
+func add_wave(amplitude := 0.75) -> void:
+	var front_rows := mini(15, height_count)
+	for z in range(front_rows):
+		var zf := float(z) / float(front_rows)
+		for x in range(width):
+			var i := idx(x, z)
+			var lateral := 0.88 + 0.12 * sin(float(x) * 0.155 + sim_time * 0.7)
+			var pulse := amplitude * pow(1.0 - zf, 1.45) * lateral
+			water[i] += pulse
+			velocity_z[i] += (1.9 + 0.45 * wave_strength) * amplitude * (1.0 - zf)
+			foam[i] = maxf(foam[i], 0.5 * amplitude)
+
+func step(dt: float) -> void:
+	sim_time += dt
+	wave_phase += dt * (0.86 + wave_strength * 0.36)
+	terrain_prev = terrain.duplicate()
+	water_prev = water.duplicate()
+	foam_prev = foam.duplicate()
+	if not water_paused:
+		_step_water(dt)
+		_step_erosion(dt)
+	_step_wetness(dt)
+	_step_thermal(dt)
+	_step_compaction(dt)
+
+func _ocean_target(x: int, z: int) -> float:
+	var wx := float(x) * 0.17
+	var wz := float(z) * 0.31
+	var swell := (0.052 + 0.026 * wave_strength) * sin(wave_phase + wx)
+	swell += 0.027 * wave_strength * sin(wave_phase * 1.69 - wx * 0.55 + wz)
+	swell += 0.014 * sin(wave_phase * 2.42 + wx * 0.31)
+	var surge := 0.018 * sin(wave_phase * 0.31)
+	return SEA_LEVEL + tide_level + swell + surge
+
+func _step_water(dt: float) -> void:
+	var n := width * height_count
+	delta_water.fill(0.0)
+	delta_sediment.fill(0.0)
+	var damping := pow(0.54, dt)
+	for i in range(n):
+		velocity_x[i] *= damping
+		velocity_z[i] *= damping
+	for z in range(1, height_count - 1):
+		for x in range(1, width - 1):
+			var i := idx(x, z)
+			if x < width - 2:
+				_transfer_edge(i, idx(x + 1, z), true, dt)
+			if z < height_count - 2:
+				_transfer_edge(i, idx(x, z + 1), false, dt)
+	for i in range(n):
+		water_next[i] = maxf(0.0, water[i] + delta_water[i])
+		sediment[i] = maxf(0.0, sediment[i] + delta_sediment[i])
+	for z in range(0, 5):
+		for x in range(width):
+			var i := idx(x, z)
+			var target_depth := maxf(0.0, _ocean_target(x, z) - terrain[i])
+			water_next[i] = lerpf(water_next[i], target_depth, clampf(dt * 5.0, 0.0, 1.0))
+			velocity_z[i] = maxf(velocity_z[i], 0.16 + 0.14 * wave_strength)
+	for i in range(n):
+		water[i] = water_next[i]
+		var speed := sqrt(velocity_x[i] * velocity_x[i] + velocity_z[i] * velocity_z[i])
+		var shallow := smoothstep(0.75, 0.018, water[i])
+		var obstacle_break := obstacle[i] * speed
+		foam[i] = clampf(foam[i] * exp(-dt * 0.82) + speed * shallow * dt * 0.38 + obstacle_break * dt * 0.12, 0.0, 1.0)
+		if water[i] < 0.018:
+			var infiltration := minf(water[i], dt * (0.0008 + (1.0 - compaction[i]) * 0.0022))
+			water[i] -= infiltration
+			wetness[i] = minf(1.0, wetness[i] + infiltration * 18.0)
+
+func _transfer_edge(a: int, b: int, horizontal: bool, dt: float) -> void:
+	var surface_a := terrain[a] + water[a]
+	var surface_b := terrain[b] + water[b]
+	var diff := surface_a - surface_b
+	if absf(diff) < 0.00015:
+		return
+	var source := a if diff > 0.0 else b
+	var destination := b if diff > 0.0 else a
+	var conductivity := 1.0 - maxf(obstacle[source], obstacle[destination]) * 0.94
+	if conductivity <= 0.012:
+		foam[source] = minf(1.0, foam[source] + absf(diff) * dt * 1.05)
+		return
+	var source_water := water[source]
+	if source_water <= EPS:
+		return
+	var hydraulic := absf(diff) * (0.72 + sqrt(maxf(source_water, 0.0)) * 0.34)
+	var amount := minf(source_water * 0.24, hydraulic * dt * conductivity)
+	if amount <= 0.0:
+		return
+	delta_water[source] -= amount
+	delta_water[destination] += amount
+	var direction := 1.0 if source == a else -1.0
+	var speed_add := amount / maxf(dt, 0.001) * 0.28
+	if horizontal:
+		velocity_x[source] += direction * speed_add
+		velocity_x[destination] += direction * speed_add * 0.56
+	else:
+		velocity_z[source] += direction * speed_add
+		velocity_z[destination] += direction * speed_add * 0.56
+	var moved_sediment := minf(sediment[source] * 0.24, sediment[source] * amount / maxf(source_water, 0.001))
+	delta_sediment[source] -= moved_sediment
+	delta_sediment[destination] += moved_sediment
+
+func _step_erosion(dt: float) -> void:
+	for z in range(2, height_count - 2):
+		for x in range(2, width - 2):
+			var i := idx(x, z)
+			if water[i] < 0.006:
+				continue
+			var speed := minf(3.4, sqrt(velocity_x[i] * velocity_x[i] + velocity_z[i] * velocity_z[i]))
+			var hx := terrain[idx(x + 1, z)] - terrain[idx(x - 1, z)]
+			var hz := terrain[idx(x, z + 1)] - terrain[idx(x, z - 1)]
+			var slope := minf(1.8, sqrt(hx * hx + hz * hz) * 0.72)
+			var cohesion := lerpf(1.0, 0.42, wetness[i]) * lerpf(1.0, 0.32, compaction[i])
+			var capacity := speed * water[i] * (0.013 + slope * 0.034) * cohesion * (1.0 - obstacle[i] * 0.84)
+			if sediment[i] < capacity:
+				var erode := minf((capacity - sediment[i]) * dt * 0.72, dt * 0.0042)
+				terrain[i] -= erode
+				sediment[i] += erode
+				compaction[i] = maxf(0.05, compaction[i] - erode * 3.0)
+				foam[i] = minf(1.0, foam[i] + erode * 20.0)
+			else:
+				var deposit := minf((sediment[i] - capacity) * dt * 0.62, sediment[i])
+				terrain[i] += deposit
+				sediment[i] -= deposit
+				compaction[i] = minf(1.0, compaction[i] + deposit * 1.6)
+
+func _step_wetness(dt: float) -> void:
+	for z in range(1, height_count - 1):
+		for x in range(1, width - 1):
+			var i := idx(x, z)
+			if water[i] > 0.005:
+				wetness_next[i] = 1.0
+			else:
+				var average := (wetness[idx(x - 1, z)] + wetness[idx(x + 1, z)] + wetness[idx(x, z - 1)] + wetness[idx(x, z + 1)]) * 0.25
+				var capillary := (average - wetness[i]) * dt * (0.72 + (1.0 - compaction[i]) * 0.45)
+				var evaporation := dt * (0.0045 + 0.014 * maxf(0.0, terrain[i] - 0.45))
+				wetness_next[i] = clampf(wetness[i] + capillary - evaporation, 0.0, 1.0)
+	for i in range(width * height_count):
+		wetness[i] = wetness_next[i]
+
+func _step_thermal(dt: float) -> void:
+	var parity := int(sim_time * 30.0) & 1
+	for z in range(2 + parity, height_count - 2, 2):
+		for x in range(2, width - 2):
+			var i := idx(x, z)
+			var repose := lerpf(0.18, 0.43, wetness[i]) + compaction[i] * 0.10 + obstacle[i] * 0.13
+			var best := i
+			var best_diff := 0.0
+			for neighbor in [idx(x - 1, z), idx(x + 1, z), idx(x, z - 1), idx(x, z + 1), idx(x - 1, z - 1), idx(x + 1, z - 1), idx(x - 1, z + 1), idx(x + 1, z + 1)]:
+				var diff := terrain[i] - terrain[neighbor]
+				if diff > best_diff:
+					best_diff = diff
+					best = neighbor
+			if best != i and best_diff > repose:
+				var move := minf((best_diff - repose) * dt * 0.86, 0.0075)
+				terrain[i] -= move
+				terrain[best] += move
+				compaction[i] = maxf(0.05, compaction[i] - move * 0.55)
+				compaction[best] = minf(1.0, compaction[best] + move * 0.32)
+
+func _step_compaction(dt: float) -> void:
+	for i in range(width * height_count):
+		var target := 0.30 + wetness[i] * 0.24
+		compaction[i] = clampf(lerpf(compaction[i], target, dt * 0.006), 0.05, 1.0)
+
+func total_water() -> float:
+	var total := 0.0
+	for value in water:
+		total += value
+	return total * cell_x * cell_z
+
+func total_sand_mass() -> float:
+	var total := 0.0
+	for value in terrain:
+		total += value
+	return total * cell_x * cell_z
+
+func serialize_state() -> Dictionary:
+	return {
+		"version": 4,
+		"width": width,
+		"height_count": height_count,
+		"terrain": terrain,
+		"water": water,
+		"wetness": wetness,
+		"compaction": compaction,
+		"foam": foam,
+		"sediment": sediment,
+		"tide": tide_level,
+		"wave": wave_strength
+	}
+
+func load_state(data: Dictionary) -> bool:
+	if int(data.get("width", 0)) != width or int(data.get("height_count", 0)) != height_count:
+		return false
+	terrain = data.get("terrain", terrain)
+	terrain_prev = terrain.duplicate()
+	water = data.get("water", water)
+	water_prev = water.duplicate()
+	wetness = data.get("wetness", wetness)
+	wetness_next = wetness.duplicate()
+	compaction = data.get("compaction", compaction)
+	foam = data.get("foam", foam)
+	foam_prev = foam.duplicate()
+	sediment = data.get("sediment", sediment)
+	water_next = water.duplicate()
+	velocity_x.fill(0.0)
+	velocity_z.fill(0.0)
+	obstacle.fill(0.0)
+	delta_water.fill(0.0)
+	delta_sediment.fill(0.0)
+	tide_level = float(data.get("tide", tide_level))
+	wave_strength = float(data.get("wave", wave_strength))
+	upload_textures(1.0)
+	return true
