@@ -4,15 +4,20 @@ uniform float time = 0.0;
 uniform float wind_strength = 1.0;
 uniform vec3 base_color : source_color = vec3(0.105, 0.22, 0.095);
 uniform vec3 tip_color : source_color = vec3(0.31, 0.39, 0.17);
+float instance_random(float id) {
+	return fract(sin(id * 12.9898 + 78.233) * 43758.5453);
+}
 void vertex() {
-	float phase = INSTANCE_CUSTOM.x * 6.283 + VERTEX.y * 2.1;
+	float seed = instance_random(float(INSTANCE_ID));
+	float phase = seed * 6.2831853 + VERTEX.y * 2.1;
 	float height_factor = clamp(UV.y, 0.0, 1.0);
 	VERTEX.x += sin(time * 1.08 + phase) * height_factor * 0.12 * wind_strength;
 	VERTEX.z += cos(time * 0.83 + phase * 1.31) * height_factor * 0.055 * wind_strength;
 }
 void fragment() {
+	float seed = instance_random(float(INSTANCE_ID));
 	vec3 col = mix(base_color, tip_color, UV.y);
-	col *= 0.82 + INSTANCE_CUSTOM.y * 0.28;
+	col *= 0.82 + seed * 0.28;
 	ALBEDO = col;
 	ROUGHNESS = 0.91;
 	SPECULAR = 0.12;
