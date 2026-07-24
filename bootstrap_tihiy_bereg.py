@@ -64,6 +64,12 @@ try:
     replace(sim, "compaction[i] + blend * 0.04", "compaction[i] + flatten_blend * 0.04")
 
     main = source / "scripts" / "main.gd"
+    if main.exists():
+        main_lines = main.read_text(encoding="utf-8").splitlines()
+        filtered_lines = [line for line in main_lines if "viewport.screen_space_aa" not in line]
+        if len(filtered_lines) != len(main_lines):
+            main.write_text("\n".join(filtered_lines) + "\n", encoding="utf-8")
+            note("patched:tihiy-bereg/scripts/main.gd:remove-screen-space-aa")
     fixes = [
         ("var y := sim.sample_height(x, z)", "var y: float = sim.sample_height(x, z)"),
         ("var height := sim.sample_height(point.x, point.z)", "var height: float = sim.sample_height(point.x, point.z)"),
