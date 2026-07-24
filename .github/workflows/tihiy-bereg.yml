@@ -75,14 +75,14 @@ jobs:
         run: |
           set -o pipefail
           /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_simulation.gd 2>&1 | tee /tmp/test-simulation.log
-          grep -q "ALL_SIMULATION_TESTS_PASSED" /tmp/test-simulation.log
+          grep -q "SIMULATION_TEST_OK" /tmp/test-simulation.log
           ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|Assertion failed" /tmp/test-simulation.log
 
       - name: Integration tests
         run: |
           set -o pipefail
           /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_integration.gd 2>&1 | tee /tmp/test-integration.log
-          grep -q "ALL_INTEGRATION_TESTS_PASSED" /tmp/test-integration.log
+          grep -q "INTEGRATION_TEST_OK" /tmp/test-integration.log
           ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|Assertion failed" /tmp/test-integration.log
 
       - name: Real OpenGL smoke test and screenshot
