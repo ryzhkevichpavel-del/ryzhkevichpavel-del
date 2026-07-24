@@ -1,0 +1,108 @@
+name: Tihiy Bereg build and verification
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tihiy-bereg/**'
+      - '.github/workflows/tihiy-bereg.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GODOT_VERSION: 4.7.1-stable
+      PROJECT_DIR: tihiy-bereg
+    steps:
+      - name: Checkout project branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+
+      - name: Materialize project source tree
+        run: python3 bootstrap_tihiy_bereg.py
+
+      - name: Publish readable source files to the project branch
+        shell: bash
+        run: |
+          git config user.name "Tihiy Bereg CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add tihiy-bereg
+          if ! git diff --cached --quiet; then
+            git commit -m "Materialize complete Godot source tree"
+            git push origin "HEAD:${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          fi
+
+      - name: Install runtime packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils unzip zip
+
+      - name: Download Godot and official export templates
+        run: |
+          curl -L --fail --retry 5 -o /tmp/godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          mv "/tmp/godot/Godot_v${GODOT_VERSION}_linux.x86_64" /tmp/godot/godot
+          chmod +x /tmp/godot/godot
+          curl -L --fail --retry 5 -o /tmp/templates.tpz "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          rm -rf /tmp/export-templates
+          mkdir -p /tmp/export-templates "$HOME/.local/share/godot/export_templates/4.7.1.stable"
+          unzip -q /tmp/templates.tpz -d /tmp/export-templates
+          cp -a /tmp/export-templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
+          /tmp/godot/godot --version
+
+      - name: Generate deterministic textures, audio and icon
+        run: |
+          python3 "$PROJECT_DIR/tools/generate_assets.py"
+
+      - name: Import and parse the complete project
+        run: |
+          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" --editor --quit
+
+      - name: Simulation tests
+        run: |
+          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_simulation.gd
+
+      - name: Integration tests
+        run: |
+          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_integration.gd
+
+      - name: Real OpenGL smoke test and screenshot
+        run: |
+          mkdir -p "$PROJECT_DIR/build"
+          xvfb-run -a -s "-screen 0 1600x900x24" /tmp/godot/godot --path "$PROJECT_DIR" --resolution 1600x900 -- --capture --quit-after-capture
+          test -s "$PROJECT_DIR/build/capture.png"
+          file "$PROJECT_DIR/build/capture.png"
+
+      - name: Export Windows x64
+        run: |
+          mkdir -p "$PROJECT_DIR/build"
+          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" --export-release "Windows Desktop" build/TihiyBereg.exe
+          test -s "$PROJECT_DIR/build/TihiyBereg.exe"
+          cp "$PROJECT_DIR/README.md" "$PROJECT_DIR/build/README.md"
+          cp "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/build/LICENSE.txt"
+          (cd "$PROJECT_DIR/build" && zip -9 "Tihiy-Bereg-2.0-Windows-x64.zip" TihiyBereg.exe README.md LICENSE.txt)
+          sha256sum "$PROJECT_DIR/build/TihiyBereg.exe" "$PROJECT_DIR/build/Tihiy-Bereg-2.0-Windows-x64.zip" > "$PROJECT_DIR/build/SHA256.txt"
+
+      - name: Upload Windows game
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tihiy-Bereg-2.0-Windows-x64
+          path: |
+            tihiy-bereg/build/Tihiy-Bereg-2.0-Windows-x64.zip
+            tihiy-bereg/build/TihiyBereg.exe
+            tihiy-bereg/build/SHA256.txt
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload verified screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tihiy-Bereg-2.0-Capture
+          path: tihiy-bereg/build/capture.png
+          if-no-files-found: error
