@@ -1,0 +1,7 @@
+.godot/
+build/
+*.tmp
+*.log
+assets/textures/*.png
+assets/audio/*.wav
+assets/icon.png

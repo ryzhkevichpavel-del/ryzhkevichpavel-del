@@ -1,0 +1,3 @@
+source:already-materialized
+restored:tihiy-bereg/scripts/simulation.gd
+bootstrap:success
