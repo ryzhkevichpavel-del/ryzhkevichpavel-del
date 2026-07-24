@@ -846,25 +846,21 @@ func _set_quality(level: int) -> void:
 	match quality_level:
 		0:
 			viewport.msaa_3d = Viewport.MSAA_DISABLED
-			viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 			environment_resource.glow_enabled = false
 			sun.shadow_enabled = false
 			if quality_button != null: quality_button.text = "Качество: быстро"
 		1:
 			viewport.msaa_3d = Viewport.MSAA_2X
-			viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
 			environment_resource.glow_enabled = false
 			sun.shadow_enabled = true
 			if quality_button != null: quality_button.text = "Качество: среднее"
 		2:
 			viewport.msaa_3d = Viewport.MSAA_4X
-			viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
 			environment_resource.glow_enabled = true
 			sun.shadow_enabled = true
 			if quality_button != null: quality_button.text = "Качество: высокое"
 		3:
 			viewport.msaa_3d = Viewport.MSAA_8X
-			viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
 			environment_resource.glow_enabled = true
 			sun.shadow_enabled = true
 			if quality_button != null: quality_button.text = "Качество: кино"
