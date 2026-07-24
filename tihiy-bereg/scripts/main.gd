@@ -109,7 +109,7 @@ func _ready() -> void:
 	_set_time_of_day(0)
 	_set_quality(2)
 	get_viewport().size_changed.connect(_on_viewport_resized)
-	if "--capture" in OS.get_cmdline_args():
+	if "--capture" in OS.get_cmdline_user_args():
 		call_deferred("_run_capture_mode")
 
 func _create_world() -> void:
@@ -1562,6 +1562,7 @@ func _load_if_exists() -> void:
 func _reset_world() -> void:
 	_push_undo()
 	sim = BeachSimulation.new(161, 121)
+	camera_rig.terrain_sampler = Callable(sim, "sample_height")
 	terrain_material.set_shader_parameter("state_tex", sim.state_texture)
 	water_material.set_shader_parameter("state_tex", sim.state_texture)
 	water_material.set_shader_parameter("flow_tex", sim.flow_texture)
@@ -1593,6 +1594,7 @@ func _on_viewport_resized() -> void:
 	pass
 
 func _run_capture_mode() -> void:
+	print("CAPTURE_MODE_STARTED")
 	await get_tree().create_timer(0.45).timeout
 	if ResourceLoader.exists(SAVE_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
@@ -1613,7 +1615,7 @@ func _run_capture_mode() -> void:
 	_place_driftwood(Vector3(10.0, 0.0, -1.0), true)
 	_throw_rock(Vector3(-10.0, 0.0, 2.0), true)
 	sim.add_wave(0.92)
-	for _i in range(150):
+	for _i in range(48):
 		sim.step(FIXED_DT)
 	sim.upload_textures(1.0)
 	camera_rig.desired_target = Vector3(0.0, 1.15, 5.0)
@@ -1627,10 +1629,10 @@ func _run_capture_mode() -> void:
 	camera_rig._update_transform(true)
 	help_panel.visible = false
 	settings_panel.visible = false
-	await get_tree().create_timer(2.2).timeout
+	await get_tree().create_timer(1.2).timeout
 	var image := get_viewport().get_texture().get_image()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://build"))
 	var error := image.save_png("res://build/capture.png")
 	print("CAPTURE_RESULT=", error, " path=res://build/capture.png")
-	if "--quit-after-capture" in OS.get_cmdline_args():
+	if "--quit-after-capture" in OS.get_cmdline_user_args():
 		get_tree().quit()
