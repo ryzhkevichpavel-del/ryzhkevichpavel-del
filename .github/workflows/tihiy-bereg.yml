@@ -14,7 +14,7 @@ permissions:
 jobs:
   verify-and-export:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     env:
       GODOT_VERSION: 4.7.1-stable
       PROJECT_DIR: tihiy-bereg
@@ -41,7 +41,7 @@ jobs:
       - name: Install runtime packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils unzip zip
+          sudo apt-get install -y --no-install-recommends xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils unzip zip file
 
       - name: Download Godot and official export templates
         run: |
@@ -56,40 +56,86 @@ jobs:
           cp -a /tmp/export-templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
           /tmp/godot/godot --version
 
+      - name: Prepare diagnostics
+        run: mkdir -p "$PROJECT_DIR/build/diagnostics"
+
       - name: Generate deterministic textures, audio and icon
+        shell: bash
         run: |
-          python3 "$PROJECT_DIR/tools/generate_assets.py"
+          set +e
+          python3 "$PROJECT_DIR/tools/generate_assets.py" 2>&1 | tee "$PROJECT_DIR/build/diagnostics/assets.log"
+          echo "${PIPESTATUS[0]}" > "$PROJECT_DIR/build/diagnostics/assets.status"
+          exit 0
 
       - name: Import and parse the complete project
+        shell: bash
         run: |
-          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" --editor --quit
+          set +e
+          timeout 120s /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" --editor --quit 2>&1 | tee "$PROJECT_DIR/build/diagnostics/import.log"
+          echo "${PIPESTATUS[0]}" > "$PROJECT_DIR/build/diagnostics/import.status"
+          exit 0
 
       - name: Simulation tests
+        shell: bash
         run: |
-          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_simulation.gd
+          set +e
+          timeout 120s /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_simulation.gd 2>&1 | tee "$PROJECT_DIR/build/diagnostics/simulation.log"
+          echo "${PIPESTATUS[0]}" > "$PROJECT_DIR/build/diagnostics/simulation.status"
+          exit 0
 
       - name: Integration tests
+        shell: bash
         run: |
-          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_integration.gd
+          set +e
+          timeout 150s /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" -s res://tests/test_integration.gd 2>&1 | tee "$PROJECT_DIR/build/diagnostics/integration.log"
+          echo "${PIPESTATUS[0]}" > "$PROJECT_DIR/build/diagnostics/integration.status"
+          exit 0
 
       - name: Real OpenGL smoke test and screenshot
+        shell: bash
         run: |
-          mkdir -p "$PROJECT_DIR/build"
-          xvfb-run -a -s "-screen 0 1600x900x24" /tmp/godot/godot --path "$PROJECT_DIR" --resolution 1600x900 -- --capture --quit-after-capture
-          test -s "$PROJECT_DIR/build/capture.png"
-          file "$PROJECT_DIR/build/capture.png"
+          set +e
+          xvfb-run -a -s "-screen 0 1600x900x24" timeout 150s /tmp/godot/godot --path "$PROJECT_DIR" --resolution 1600x900 -- --capture --quit-after-capture 2>&1 | tee "$PROJECT_DIR/build/diagnostics/opengl.log"
+          code="${PIPESTATUS[0]}"
+          test -s "$PROJECT_DIR/build/capture.png" || code=91
+          echo "$code" > "$PROJECT_DIR/build/diagnostics/opengl.status"
+          if test -s "$PROJECT_DIR/build/capture.png"; then file "$PROJECT_DIR/build/capture.png"; fi
+          exit 0
 
       - name: Export Windows x64
+        shell: bash
         run: |
-          mkdir -p "$PROJECT_DIR/build"
-          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" --export-release "Windows Desktop" build/TihiyBereg.exe
-          test -s "$PROJECT_DIR/build/TihiyBereg.exe"
-          cp "$PROJECT_DIR/README.md" "$PROJECT_DIR/build/README.md"
-          cp "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/build/LICENSE.txt"
-          (cd "$PROJECT_DIR/build" && zip -9 "Tihiy-Bereg-2.0-Windows-x64.zip" TihiyBereg.exe README.md LICENSE.txt)
-          sha256sum "$PROJECT_DIR/build/TihiyBereg.exe" "$PROJECT_DIR/build/Tihiy-Bereg-2.0-Windows-x64.zip" > "$PROJECT_DIR/build/SHA256.txt"
+          set +e
+          /tmp/godot/godot --headless --audio-driver Dummy --path "$PROJECT_DIR" --export-release "Windows Desktop" build/TihiyBereg.exe 2>&1 | tee "$PROJECT_DIR/build/diagnostics/export.log"
+          code="${PIPESTATUS[0]}"
+          test -s "$PROJECT_DIR/build/TihiyBereg.exe" || code=92
+          if test "$code" = 0; then
+            cp "$PROJECT_DIR/README.md" "$PROJECT_DIR/build/README.md"
+            cp "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/build/LICENSE.txt"
+            (cd "$PROJECT_DIR/build" && zip -9 "Tihiy-Bereg-2.0-Windows-x64.zip" TihiyBereg.exe README.md LICENSE.txt)
+            sha256sum "$PROJECT_DIR/build/TihiyBereg.exe" "$PROJECT_DIR/build/Tihiy-Bereg-2.0-Windows-x64.zip" > "$PROJECT_DIR/build/SHA256.txt"
+          fi
+          echo "$code" > "$PROJECT_DIR/build/diagnostics/export.status"
+          exit 0
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tihiy-Bereg-2.0-Diagnostics
+          path: tihiy-bereg/build/diagnostics
+          if-no-files-found: error
+
+      - name: Upload verified screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tihiy-Bereg-2.0-Capture
+          path: tihiy-bereg/build/capture.png
+          if-no-files-found: ignore
 
       - name: Upload Windows game
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Tihiy-Bereg-2.0-Windows-x64
@@ -97,12 +143,19 @@ jobs:
             tihiy-bereg/build/Tihiy-Bereg-2.0-Windows-x64.zip
             tihiy-bereg/build/TihiyBereg.exe
             tihiy-bereg/build/SHA256.txt
-          if-no-files-found: error
+          if-no-files-found: ignore
           compression-level: 0
 
-      - name: Upload verified screenshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: Tihiy-Bereg-2.0-Capture
-          path: tihiy-bereg/build/capture.png
-          if-no-files-found: error
+      - name: Enforce every quality gate
+        if: always()
+        shell: bash
+        run: |
+          set -e
+          for stage in assets import simulation integration opengl export; do
+            code="$(cat "$PROJECT_DIR/build/diagnostics/$stage.status" 2>/dev/null || echo 99)"
+            echo "$stage=$code"
+            test "$code" = 0
+          done
+          test -s "$PROJECT_DIR/build/capture.png"
+          test -s "$PROJECT_DIR/build/TihiyBereg.exe"
+          test -s "$PROJECT_DIR/build/Tihiy-Bereg-2.0-Windows-x64.zip"
