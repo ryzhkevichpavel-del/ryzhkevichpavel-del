@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_alpha_prepass, cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_prepass_alpha, cull_back, diffuse_burley, specular_schlick_ggx;
 
 uniform sampler2D water_noise : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D foam_tex : filter_linear_mipmap_anisotropic, repeat_enable;
